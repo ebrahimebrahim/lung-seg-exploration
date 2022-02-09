@@ -3,6 +3,10 @@ import numpy as np
 from typing import Mapping, Hashable, List, Sequence
 from torch.utils.data._utils.collate import default_collate
 
+# This module contains all the extra components needed for data loading and segmentation model training,
+# some of which need to exist in any environment where the saved model is to be deployed.
+
+
 # Custom transform to convert a collection of segmentation mask arrays to a single one-hot encoded array
 class MasksToOneHotD(monai.transforms.MapTransform):
     def __init__(self, keys: monai.config.KeysCollection,
