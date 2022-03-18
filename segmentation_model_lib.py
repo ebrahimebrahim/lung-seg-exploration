@@ -1,6 +1,6 @@
 import monai
 import numpy as np
-from typing import Mapping, Hashable, List, Sequence
+from typing import Any, Callable, Optional, Tuple, Union, Mapping, Hashable, List, Sequence
 from torch.utils.data._utils.collate import default_collate
 
 # This module contains all the extra components needed for data loading and segmentation model training,
@@ -75,6 +75,64 @@ def rgb_to_grayscale(x):
     elif len(x.shape)==3: return x.mean(axis=2)
     else: raise Exception("rgb_to_grayscale: unexpected number of axes in array")
 
+# Define a custom transform that drops out blob shapes of random values sampled from the image value
+
+def blobbed(img, R):
+    """Add a random metaball blob to an image, using the random state R"""
+    img_max = img.max()
+    val = R.uniform(max(img.min(),img_max/2),img_max)
+    number_of_metaballs = R.randint(10,11)
+    
+    metaball_radius_mean = img.shape[2]/16
+    metaball_radius_std = img.shape[2]/32
+    
+    metaball_radii = R.normal(metaball_radius_mean, scale = metaball_radius_std, size = number_of_metaballs)
+
+    blob_center_y = R.uniform(0,img.shape[1])
+    blob_center_x = R.uniform(0,img.shape[2])
+    blob_std_y = img.shape[2]/8
+    blob_std_x = img.shape[1]/8
+    
+    metaball_y_locations = R.normal(blob_center_y, scale = blob_std_y, size = number_of_metaballs)
+    metaball_x_locations = R.normal(blob_center_x, scale = blob_std_x, size = number_of_metaballs)
+    
+    y, x = np.ogrid[tuple(slice(0, i) for i in img.shape[1:])]
+    mask = sum(
+        r**2 / ((y-y_loc)**2 + (x-x_loc)**2)
+        for r, y_loc, x_loc in zip(metaball_radii, metaball_y_locations, metaball_x_locations)
+    ) > 1
+    img[0][mask]=val
+    
+    return img
+
+
+class RandBlobDropoutD(monai.transforms.RandomizableTransform, monai.transforms.MapTransform):
+    """
+    Bleh.
+    """
+
+    backend = [monai.utils.enums.TransformBackends.NUMPY]
+
+    def __init__(
+        self,
+        keys: monai.config.KeysCollection,
+        prob: float = 0.1,
+        allow_missing_keys: bool = False,
+    ):
+        monai.transforms.MapTransform.__init__(self, keys, allow_missing_keys)
+        monai.transforms.RandomizableTransform.__init__(self, prob=prob)
+
+    def __call__(self, data):
+        d = dict(data)
+        self.randomize(None)
+        if not self._do_transform:
+            return d
+        
+        for key in self.key_iterator(d):
+            d[key] = blobbed(d[key], self.R)
+
+        return d
+        
 
 # A custom version of list_data_collate copied straight out of MONAI codebase and slightly modified.
 def list_data_collate_no_meta(batch: Sequence):
